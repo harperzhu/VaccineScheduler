@@ -169,7 +169,34 @@ public class Scheduler {
     }
 
     private static void loginPatient(String[] tokens) {
-        // TODO: Part 1
+        // login_patient <username> <password>
+        // check 1: if someone's already logged-in, they need to log out first
+        if (currentPatient != null || currentPatient != null) {
+            System.out.println("Already logged-in!");
+            return;
+        }
+        // check 2: the length for tokens need to be exactly 3 to include all information (with the operation name)
+        if (tokens.length != 3) {
+            System.out.println("Please try again!");
+            return;
+        }
+        String username = tokens[1];
+        String password = tokens[2];
+
+        Patient patient = null;
+        try {
+            patient = new Patient.PatientGetter(username, password).get();
+        } catch (SQLException e) {
+            System.out.println("Error occurred when logging in");
+            e.printStackTrace();
+        }
+        // check if the login was successful
+        if (patient == null) {
+            System.out.println("Please try again!");
+        } else {
+            System.out.println("Caregiver logged in as: " + username);
+            currentPatient = patient;
+        }
     }
 
     private static void loginCaregiver(String[] tokens) {

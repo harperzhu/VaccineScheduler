@@ -14,6 +14,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Date;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Scheduler {
 
@@ -231,8 +233,86 @@ public class Scheduler {
     }
 
     private static void searchCaregiverSchedule(String[] tokens) {
-        // TODO: Part 2
+        //first check to see if the user has logged in
+        if (currentCaregiver == null && currentPatient == null) {
+            System.out.println("Need to be logged in!");
+        } else if (tokens.length != 2) {
+            System.out.println("Please try again!");
+        } else {
+            //if the user has logged in
+            //make the connection
+            ConnectionManager cm = new ConnectionManager();
+            Connection con = cm.createConnection();
+
+            //obtain the first token in user input as the date
+            String date = tokens[1];
+
+            String vaccines = "SELECT * FROM Vaccines";
+            try {
+                PreparedStatement vaccineStatement = con.prepareStatement(vaccines);
+                ResultSet VaccineByCaregivers = vaccineStatement.executeQuery();
+                List<String> availableCaregivers = AvailableCaregiversGetter(date);
+
+                System.out.println("List of Caregivers Available\n-------");
+                for (String individualCaregivers : availableCaregivers) {
+                    //remove all the white space from both ends of a string
+                    System.out.println(individualCaregivers.trim());
+                }
+                System.out.println("\nList of Vaccines & Doses Counts\n-------");
+                while (VaccineByCaregivers.next()) {
+                    String vaccineName = VaccineByCaregivers.getString("Name").trim();
+                    int doseCount = VaccineByCaregivers.getInt("Doses");
+                    System.out.println(vaccineName + ": " + doseCount);
+                }
+            } catch (IllegalArgumentException e) {
+                System.out.println("Please enter a valid date!");
+            } catch (SQLException e) {
+                System.out.println("Error occurred when getting caregiver schedule");
+                e.printStackTrace();
+            } finally {
+                cm.closeConnection();
+            }
+        }
     }
+
+
+
+    private static List<String> AvailableCaregiversGetter(String date) {
+        ConnectionManager cm = new ConnectionManager();
+        Connection con = cm.createConnection();
+        String queryForAvailableCaregivers = "SELECT a.Username FROM Availabilities a " +
+                "WHERE a.Time = ? AND a.Username NOT IN (" +
+                "SELECT b.CaregiverUsername " +
+                "FROM Appointments b " +
+                "WHERE b.Time = ?" +
+                ")";
+
+
+        try {
+            PreparedStatement caregiverGetterStatement = con.prepareStatement(queryForAvailableCaregivers);
+            Date selectedDate = Date.valueOf(date);
+            caregiverGetterStatement.setDate(1, selectedDate);
+            caregiverGetterStatement.setDate(2, selectedDate);
+            ResultSet resultingAvailableCaregiverByQuery = caregiverGetterStatement.executeQuery();
+
+            List<String> newAvailableCaregiverList = new ArrayList<>();
+            while (resultingAvailableCaregiverByQuery.next()) {
+                newAvailableCaregiverList.add(resultingAvailableCaregiverByQuery.getString("Username").trim());
+            }
+
+            return newAvailableCaregiverList;
+        } catch (IllegalArgumentException e) {
+            System.out.println("the input date is not valid");
+        } catch (SQLException e) {
+            System.out.println("Fail to create an appoinment. Please try again");
+            e.printStackTrace();
+        } finally {
+            cm.closeConnection();
+        }
+        return null;
+    }
+
+
 
     private static void reserve(String[] tokens) {
         // TODO: Part 2
@@ -263,8 +343,63 @@ public class Scheduler {
         }
     }
 
+    private static String cancelQueryHelper(String userType) {
+        String cancelQuery = "SELECT AppointmentID FROM Appointments " +
+                "WHERE AppointmentID = ? AND " +
+                userType + " = ?";
+        return cancelQuery;
+    }
+
     private static void cancel(String[] tokens) {
-        // TODO: Extra credit
+        if (currentCaregiver == null && currentPatient == null) {
+            System.out.println("Not logged in. In order to cancel, you have to first log in");
+        } else if (tokens.length != 2) {
+            System.out.println("The number of input parameter is incorrect. Please try inputting only the username and password ");
+        } else {
+            //if the user is logged in
+            String cancelQuery = "";
+            String username;
+            String appointmentID = tokens[1];
+            String userType;
+            String deletedQuery = "DELETE FROM Appointments WHERE AppointmentID = ?";
+            if (currentCaregiver == null && currentPatient != null) {
+                //if the users logged in as patient
+                userType = "PatientUsername";
+                username = currentPatient.getUsername();
+                cancelQuery = cancelQueryHelper(userType);
+            } else {
+                //if the users logged in as caregiver
+                userType = "CaregiverUsername";
+                username = currentCaregiver.getUsername();
+                cancelQuery = cancelQueryHelper(userType);
+            }
+
+            ConnectionManager cm = new ConnectionManager();
+            Connection con = cm.createConnection();
+
+            try {
+                PreparedStatement statement = con.prepareStatement(cancelQuery);
+                ResultSet queryResult = statement.executeQuery();
+                statement.setString(1, appointmentID);
+                statement.setString(2, username);
+
+                if (queryResult.next()) {
+                    PreparedStatement statement2 = con.prepareStatement(deletedQuery);
+                    statement2.setString(1, appointmentID);
+                    statement2.executeUpdate();
+                    System.out.println("** the following appointment " + appointmentID + " has been deleted! **");
+                } else {
+                    System.out.println("This appointment doesn't exist or you are not authorize to delete it");
+                }
+            } catch (SQLException e) {
+                System.out.println("failed to delete appointment, Please try again");
+                e.printStackTrace();
+            } finally {
+                cm.closeConnection();
+            }
+
+
+        }
     }
 
     private static void addDoses(String[] tokens) {
@@ -310,11 +445,102 @@ public class Scheduler {
         System.out.println("Doses updated!");
     }
 
+
+//    private static void showAppointmentsQueryHelper(String userType){
+//        String username;
+//        String query;
+//        String accountType;
+//        String opposedAccountType;
+//        if (userType == "Patient") {
+//            //if the user is logged in as caregiver
+//            accountType = userType + "Username";
+//            opposedAccountType = "PatientUsername";
+//            username = currentCaregiver.getUsername();
+//            query = "SELECT AppointmentID, Vaccine, Time, " + opposedAccountType +
+//                    "FROM Appointments " +
+//                    "WHERE " + accountType +" = ?";
+//        } else if (userType == "Caregiver") {
+//            //if the user is logged in as patient
+//            accountType = userType + "Username";
+//            opposedAccountType = "CaregiverUsername";
+//            username = currentPatient.getUsername();
+//            query = "SELECT AppointmentID, Vaccine, Time, " + opposedAccountType +
+//                    "FROM Appointments " +
+//                    "WHERE " + accountType +" = ?";
+//        } else {
+//            System.out.println("You haven't logged in yet.");
+//            return;
+//        }
+//    }
+
+    private static String queryGenerator(String accountType){
+        String opposedTypeUsername;
+        if(accountType.contains("Caregiver")){
+            opposedTypeUsername = "PatientUsername";
+        }else{
+            opposedTypeUsername = "CaregiverUsername";
+        }
+        String query = "SELECT AppointmentID, Vaccine, Time, " +accountType +
+                "FROM Appointments " +
+                "WHERE "+ opposedTypeUsername + " = ?";
+        return query;
+    }
+
     private static void showAppointments(String[] tokens) {
-        // TODO: Part 2
+        String resultingQuery = "";
+        String accountType = "";
+        String username = "";
+
+
+        if (currentCaregiver != null && currentPatient == null) {
+            //if the user is logged in as caregiver
+            username = currentCaregiver.getUsername();
+            accountType = "PatientUsername";
+            resultingQuery = queryGenerator(accountType);
+
+        } else if (currentCaregiver == null && currentPatient != null) {
+            //if the user is logged in as patient
+            accountType = "CaregiverUsername";
+            username = currentPatient.getUsername();
+            resultingQuery = queryGenerator(accountType);
+
+        } else {
+            System.out.println("Please login first!");
+            return;
+        }
+
+        ConnectionManager cm = new ConnectionManager();
+        Connection con = cm.createConnection();
+
+        try {
+            PreparedStatement statement = con.prepareStatement(resultingQuery);
+            statement.setString(1, username);
+            ResultSet queryResult = statement.executeQuery();
+            while (queryResult.next()) {
+                String date = queryResult.getDate("Time").toString();
+                String name = queryResult.getString(accountType).trim();
+                String appointmentID = queryResult.getString("AppointmentID").trim();
+                String vaccineName = queryResult.getString("Vaccine").trim();
+                System.out.println(" -- Name: " + name + " || Date: " + date +
+                                "Appointment ID: " + appointmentID + " || Vaccine: " + vaccineName);
+            }
+        } catch (SQLException e) {
+            System.out.println("failed to show appointments");
+            e.printStackTrace();
+        } finally {
+            cm.closeConnection();
+        }
     }
 
     private static void logout(String[] tokens) {
-        // TODO: Part 2
+        //first make sure that person is logged in before logging them out
+        if (currentCaregiver != null || currentPatient != null) {
+            //nullify users regardless of type
+            currentCaregiver = null;
+            currentPatient = null;
+            System.out.println("** Successfully logged out **");
+        } else {
+            System.out.println("Already logged out!");
+        }
     }
 }

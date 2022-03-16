@@ -232,42 +232,54 @@ public class Scheduler {
         }
     }
 
+    //goal: output the username for the caregivers available with the available doses for vaccines
     private static void searchCaregiverSchedule(String[] tokens) {
+        //both patients and caregivers can perform this table
         //first check to see if the user has logged in
         if (currentCaregiver == null && currentPatient == null) {
-            System.out.println("Need to be logged in!");
+            System.out.println("You need to log in to use this feature");
         } else if (tokens.length != 2) {
-            System.out.println("Please try again!");
+            System.out.println("The input length is incorrect. Please try again");
         } else {
             //if the user has logged in
-            //make the connection
             ConnectionManager cm = new ConnectionManager();
             Connection con = cm.createConnection();
 
             //obtain the first token in user input as the date
             String date = tokens[1];
+            String getSearchCaregiverSchedule = "SELECT * FROM Vaccines";
 
-            String vaccines = "SELECT * FROM Vaccines";
             try {
-                PreparedStatement vaccineStatement = con.prepareStatement(vaccines);
+                Date d = Date.valueOf(date);
+                PreparedStatement vaccineStatement = con.prepareStatement(getSearchCaregiverSchedule);
+                vaccineStatement.setDate(1, d);
                 ResultSet VaccineByCaregivers = vaccineStatement.executeQuery();
                 List<String> availableCaregivers = AvailableCaregiversGetter(date);
 
-                System.out.println("List of Caregivers Available\n-------");
+                int caregiverCount = 0;
+                System.out.println("The following Caregivers are Available: \n");
                 for (String individualCaregivers : availableCaregivers) {
                     //remove all the white space from both ends of a string
                     System.out.println(individualCaregivers.trim());
                 }
-                System.out.println("\nList of Vaccines & Doses Counts\n-------");
+
+                System.out.println("The following Vaccines are available with the displayed Doses Counts:\n");
+
                 while (VaccineByCaregivers.next()) {
-                    String vaccineName = VaccineByCaregivers.getString("Name").trim();
+                    caregiverCount ++;
                     int doseCount = VaccineByCaregivers.getInt("Doses");
+                    String vaccineName = VaccineByCaregivers.getString("Name").trim();
                     System.out.println(vaccineName + ": " + doseCount);
                 }
+
+                if(caregiverCount ==0){
+                    System.out.println("There's no caregiver available on this date. Please select another date");
+                }
+
             } catch (IllegalArgumentException e) {
                 System.out.println("Please enter a valid date!");
             } catch (SQLException e) {
-                System.out.println("Error occurred when getting caregiver schedule");
+                System.out.println("Error occurred when searching caregiver schedule");
                 e.printStackTrace();
             } finally {
                 cm.closeConnection();
@@ -304,7 +316,7 @@ public class Scheduler {
         } catch (IllegalArgumentException e) {
             System.out.println("the input date is not valid");
         } catch (SQLException e) {
-            System.out.println("Fail to create an appoinment. Please try again");
+            System.out.println("Fail to create an appointment. Please try again");
             e.printStackTrace();
         } finally {
             cm.closeConnection();
@@ -315,10 +327,103 @@ public class Scheduler {
 
 
     private static void reserve(String[] tokens) {
-        // TODO: Part 2
+        //make sure the user is logged in
+        if (currentPatient == null || currentCaregiver != null) {
+            System.out.println("In order to reserve an appointment, you have to log in as a user");
+        } else if (tokens.length != 3) {
+            System.out.println("the length of input is incorrect. Please try again with the format reserve <date> <vaccine>");
+        } else {
+            ConnectionManager cm = new ConnectionManager();
+            Connection con = cm.createConnection();
+
+            String inputDate = tokens[1];
+            String inputVaccine = tokens[2];
+            Vaccine availableDosesForInputVaccine;
+
+
+            try {
+                //check if there's any doses left for this vaccine
+                String vaccineSelectionQuery = "SELECT Doses(*) FROM Vaccines WHERE Name = ?";
+                PreparedStatement statementForVaccine = con.prepareStatement(vaccineSelectionQuery);
+                statementForVaccine.setString(1, inputVaccine);
+                ResultSet resultSet = statementForVaccine.executeQuery();
+                while (resultSet.next()){
+                    int DoseCount = resultSet.getInt("Doses");
+                    if(DoseCount == 0){
+                        System.out.println("No dose left for this vaccine. Please choose another vaccine");
+                        return;
+                    }
+                }
+
+                // return all the available caregiver on this date
+                String assignedCaregiver = availableCaregiverChecker(inputDate);
+
+                //checking if there's appointment available
+                String appointmentQuery= "SELECT COUNT(*) AS COUNT FROM Appointments";
+                if(assignedCaregiver != null) {
+                    // automatically generate a random appointment ID
+                    ResultSet appointmentIDSSet = con.prepareStatement(appointmentQuery).executeQuery();
+                    appointmentIDSSet.next();
+                    String id = appointmentIDSSet.getInt("COUNT") + "-" + (int) (Math.floor(Math.random() * 10000));
+
+                    // create a appointment statement
+                    String addAppointment = "INSERT INTO Appointments (AppointmentID, Time, CaregiverUsername, " +
+                            "PatientUsername, Vaccine) VALUES (?, ?, ?, ?, ?)";
+                    PreparedStatement statement = con.prepareStatement(addAppointment);
+                    availableDosesForInputVaccine = (new Vaccine.VaccineGetter(inputVaccine)).get();;
+                    statement.setString(1, id);
+                    statement.setDate(2, Date.valueOf(inputDate));
+                    statement.setString(3, assignedCaregiver);
+                    statement.setString(4, currentPatient.getUsername());
+                    statement.setString(5, availableDosesForInputVaccine.getVaccineName());
+
+                    // update the database
+                    statement.executeUpdate();
+                    availableDosesForInputVaccine.decreaseAvailableDoses(1);
+
+                    System.out.println("Successfully set up appointment with " + assignedCaregiver + " on " + inputDate);
+                    System.out.println("Appointment ID: " + id);
+                }
+            } catch (IllegalArgumentException e) {
+                System.out.println("the date you entered is not valid. Please try again");
+            } catch (SQLException e) {
+                System.out.println("failed to create an appointment. Please try again");
+                e.printStackTrace();
+            }
+        }
     }
 
-    private static void uploadAvailability(String[] tokens) {
+    private static String availableCaregiverChecker(String inputDate) {
+        // return all the available caregiver on this date
+        List<String> numberOfAvailableCaregiverOnThisDate = AvailableCaregiversGetter(inputDate);
+
+        // attempt to reserve will be terminated if no caregivers are available on this date
+        if (numberOfAvailableCaregiverOnThisDate.size() == 0) {
+            System.out.println("No caregivers are available on " + inputDate);
+            return null;
+        }
+
+        // get a random available caregiver
+        String assignedCaregiver = numberOfAvailableCaregiverOnThisDate.
+                get((int) Math.floor(Math.random() * numberOfAvailableCaregiverOnThisDate.size()));
+
+        return assignedCaregiver;
+    }
+
+
+//    private static Vaccine vaccineAvailabilityChecker(String inputVaccine){
+//        Vaccine availableDosesForInputVaccine;
+//        availableDosesForInputVaccine = (new Vaccine.VaccineGetter(inputVaccine)).get();
+//        if (availableDosesForInputVaccine == null) {
+//            System.out.println("this vaccine doesn't have any more doses left");
+//            return null;
+//        }
+//        return availableDosesForInputVaccine;
+//    }
+
+
+
+        private static void uploadAvailability(String[] tokens) {
         // upload_availability <date>
         // check 1: check if the current logged-in user is a caregiver
         if (currentCaregiver == null) {
@@ -446,32 +551,7 @@ public class Scheduler {
     }
 
 
-//    private static void showAppointmentsQueryHelper(String userType){
-//        String username;
-//        String query;
-//        String accountType;
-//        String opposedAccountType;
-//        if (userType == "Patient") {
-//            //if the user is logged in as caregiver
-//            accountType = userType + "Username";
-//            opposedAccountType = "PatientUsername";
-//            username = currentCaregiver.getUsername();
-//            query = "SELECT AppointmentID, Vaccine, Time, " + opposedAccountType +
-//                    "FROM Appointments " +
-//                    "WHERE " + accountType +" = ?";
-//        } else if (userType == "Caregiver") {
-//            //if the user is logged in as patient
-//            accountType = userType + "Username";
-//            opposedAccountType = "CaregiverUsername";
-//            username = currentPatient.getUsername();
-//            query = "SELECT AppointmentID, Vaccine, Time, " + opposedAccountType +
-//                    "FROM Appointments " +
-//                    "WHERE " + accountType +" = ?";
-//        } else {
-//            System.out.println("You haven't logged in yet.");
-//            return;
-//        }
-//    }
+
 
     private static String queryGenerator(String accountType){
         String opposedTypeUsername;

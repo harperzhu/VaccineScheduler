@@ -254,6 +254,10 @@ public class Scheduler {
                 PreparedStatement vaccineStatement = con.prepareStatement(getSearchCaregiverSchedule);
                 vaccineStatement.setDate(1, d);
                 ResultSet VaccineByCaregivers = vaccineStatement.executeQuery();
+
+
+
+
                 List<String> availableCaregivers = AvailableCaregiversGetter(date);
 
                 int caregiverCount = 0;
@@ -290,22 +294,25 @@ public class Scheduler {
 
 
     private static List<String> AvailableCaregiversGetter(String date) {
+
         ConnectionManager cm = new ConnectionManager();
         Connection con = cm.createConnection();
-        String queryForAvailableCaregivers = "SELECT a.Username FROM Availabilities a " +
-                "WHERE a.Time = ? AND a.Username NOT IN (" +
-                "SELECT b.CaregiverUsername " +
-                "FROM Appointments b " +
-                "WHERE b.Time = ?" +
-                ")";
-
 
         try {
-            PreparedStatement caregiverGetterStatement = con.prepareStatement(queryForAvailableCaregivers);
+
+            String queryForAvailableCaregivers = "SELECT Username " +
+                    "FROM Availabilities AS Avail1" +
+                    "WHERE Avail1.Time = ? " +
+                    "AND Avail1.Username NOT IN (" +
+                    "SELECT Avail2.CaregiverUsername " +
+                    "FROM Availabilities AS Avail2  " +
+                    "WHERE Avail2.Time = ?" +
+                    ")";
             Date selectedDate = Date.valueOf(date);
-            caregiverGetterStatement.setDate(1, selectedDate);
-            caregiverGetterStatement.setDate(2, selectedDate);
-            ResultSet resultingAvailableCaregiverByQuery = caregiverGetterStatement.executeQuery();
+            PreparedStatement statementForAvailCaregiver = con.prepareStatement(queryForAvailableCaregivers);
+            statementForAvailCaregiver.setDate(1, selectedDate);
+            statementForAvailCaregiver.setDate(2, selectedDate);
+            ResultSet resultingAvailableCaregiverByQuery = statementForAvailCaregiver.executeQuery();
 
             List<String> newAvailableCaregiverList = new ArrayList<>();
             while (resultingAvailableCaregiverByQuery.next()) {
@@ -342,7 +349,7 @@ public class Scheduler {
 
 
             try {
-                //check if there's any doses left for this vaccine
+                //STEP1: check if there's any doses left for this vaccine
                 String vaccineSelectionQuery = "SELECT Doses(*) FROM Vaccines WHERE Name = ?";
                 PreparedStatement statementForVaccine = con.prepareStatement(vaccineSelectionQuery);
                 statementForVaccine.setString(1, inputVaccine);
@@ -355,30 +362,40 @@ public class Scheduler {
                     }
                 }
 
-                // return all the available caregiver on this date
-                String assignedCaregiver = availableCaregiverChecker(inputDate);
+                // STEP 2: return all the available caregiver on this date
+                int availableCaregiverOnthisDate = availableCaregiverChecker(inputDate);
+                if(availableCaregiverOnthisDate >0) {
+                    String randomCaregiverSelectionQuery = "SELECT TOP 1 Username FROM Availabilities WHERE TIME = ? ORDER BY NEWID()";
+                    PreparedStatement statementRandom = con.prepareStatement(randomCaregiverSelectionQuery);
+                String assignedCaregiver = getRandomCaregiverHelper(inputDate,statementRandom);
 
-                //checking if there's appointment available
+
+
+                //STEP 3: checking if there's appointment available
                 String appointmentQuery= "SELECT COUNT(*) AS COUNT FROM Appointments";
-                if(assignedCaregiver != null) {
+                //if there's a caregiver assigned to the case
+
+
                     // automatically generate a random appointment ID
                     ResultSet appointmentIDSSet = con.prepareStatement(appointmentQuery).executeQuery();
                     appointmentIDSSet.next();
                     String id = appointmentIDSSet.getInt("COUNT") + "-" + (int) (Math.floor(Math.random() * 10000));
 
                     // create a appointment statement
-                    String addAppointment = "INSERT INTO Appointments (AppointmentID, Time, CaregiverUsername, " +
-                            "PatientUsername, Vaccine) VALUES (?, ?, ?, ?, ?)";
-                    PreparedStatement statement = con.prepareStatement(addAppointment);
-                    availableDosesForInputVaccine = (new Vaccine.VaccineGetter(inputVaccine)).get();;
-                    statement.setString(1, id);
-                    statement.setDate(2, Date.valueOf(inputDate));
-                    statement.setString(3, assignedCaregiver);
-                    statement.setString(4, currentPatient.getUsername());
-                    statement.setString(5, availableDosesForInputVaccine.getVaccineName());
 
-                    // update the database
-                    statement.executeUpdate();
+                    String newAppointmentQuery = "INSERT INTO Appointments (AppointmentID, Time, CaregiverUsername, " +
+                            "PatientUsername, Vaccine) VALUES (?, ?, ?, ?, ?)";
+                    PreparedStatement statement = con.prepareStatement(newAppointmentQuery);
+                    availableDosesForInputVaccine = (new Vaccine.VaccineGetter(inputVaccine)).get();;
+                    AppointmentIDInsertionHelper(inputDate,inputVaccine, id,assignedCaregiver,statement,availableDosesForInputVaccine);
+
+                    //Deleting the availabilities from the table
+
+                    String deleteQuery = "DELETE FROM Availabilities WHERE username = ? AND TIME = ?";
+                    PreparedStatement deleteStatement = con.prepareStatement(deleteQuery);
+                    DeletedAvailabilityHelper(inputDate,assignedCaregiver,deleteStatement);
+
+                    //at the same time, delete available doses by 1
                     availableDosesForInputVaccine.decreaseAvailableDoses(1);
 
                     System.out.println("Successfully set up appointment with " + assignedCaregiver + " on " + inputDate);
@@ -393,33 +410,87 @@ public class Scheduler {
         }
     }
 
-    private static String availableCaregiverChecker(String inputDate) {
+
+    private static void DeletedAvailabilityHelper(String inputDate ,String assignedCaregiver, PreparedStatement statement) {
+        try{
+
+            statement.setString(1, assignedCaregiver);
+            statement.setDate(2,Date.valueOf(inputDate));
+            statement.executeUpdate();
+    }catch (IllegalArgumentException e) {
+        System.out.println("the date you entered is not valid. Please try again");
+    } catch (SQLException e) {
+        System.out.println("failed to delete an availability. Please try again");
+        e.printStackTrace();
+    }
+
+
+
+    }
+
+        private static void AppointmentIDInsertionHelper(String inputDate, String inputVaccine, String id,String assignedCaregiver, PreparedStatement statement, Vaccine availableDosesForInputVaccine) {
+try{
+
+        statement.setString(1, id);
+        statement.setDate(2, Date.valueOf(inputDate));
+        statement.setString(3, assignedCaregiver);
+        statement.setString(4, currentPatient.getUsername());
+        statement.setString(5, availableDosesForInputVaccine.getVaccineName());
+        statement.executeUpdate();
+    }catch (IllegalArgumentException e) {
+    System.out.println("the date you entered is not valid. Please try again");
+} catch (SQLException e) {
+    System.out.println("failed to create an appointment. Please try again");
+    e.printStackTrace();
+}
+    }
+
+    private static int availableCaregiverChecker(String inputDate) {
         // return all the available caregiver on this date
         List<String> numberOfAvailableCaregiverOnThisDate = AvailableCaregiversGetter(inputDate);
 
         // attempt to reserve will be terminated if no caregivers are available on this date
         if (numberOfAvailableCaregiverOnThisDate.size() == 0) {
             System.out.println("No caregivers are available on " + inputDate);
-            return null;
+            return 0;
         }
+        return numberOfAvailableCaregiverOnThisDate.size();
+    }
 
-        // get a random available caregiver
-        String assignedCaregiver = numberOfAvailableCaregiverOnThisDate.
-                get((int) Math.floor(Math.random() * numberOfAvailableCaregiverOnThisDate.size()));
+    private static String getRandomCaregiverHelper(String inputDate, PreparedStatement statement) {
+        if(availableCaregiverChecker(inputDate)>0){
+            try{
+                statement.setDate(1,Date.valueOf(inputDate));
+                ResultSet allAvailableCaregivers = statement.executeQuery();
+                List<String> newAvailableCaregiverList = new ArrayList<>();
+                while (allAvailableCaregivers.next()) {
+                    newAvailableCaregiverList.add(allAvailableCaregivers.getString("Username").trim());
+                }
+                int NumOfAvailableCaregiver = newAvailableCaregiverList.size();
+                String assignedCaregiver = "";
+                int randomNumber = (int) Math.floor(Math.random()* NumOfAvailableCaregiver);
+               if(newAvailableCaregiverList.size() == 0){
+                   System.out.println("No caregivers are available on " + inputDate);
+                    return null;
+               }else{//if there are some caregiver available
+                   assignedCaregiver = newAvailableCaregiverList.get(randomNumber);
+               }
 
-        return assignedCaregiver;
+                return assignedCaregiver;
+
+
+
+            }catch (IllegalArgumentException e) {
+                System.out.println("the date you entered is not valid. Please try again");
+            } catch (SQLException e) {
+                System.out.println("failed to get random caregiver. Please try again");
+                e.printStackTrace();
+            }
+        }
+        return null;
     }
 
 
-//    private static Vaccine vaccineAvailabilityChecker(String inputVaccine){
-//        Vaccine availableDosesForInputVaccine;
-//        availableDosesForInputVaccine = (new Vaccine.VaccineGetter(inputVaccine)).get();
-//        if (availableDosesForInputVaccine == null) {
-//            System.out.println("this vaccine doesn't have any more doses left");
-//            return null;
-//        }
-//        return availableDosesForInputVaccine;
-//    }
 
 
 

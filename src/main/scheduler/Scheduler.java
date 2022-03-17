@@ -97,7 +97,10 @@ public class Scheduler {
     private static void createPatient(String[] tokens) {
         // create_caregiver <username> <password>
         // check 1: the length for tokens need to be exactly 3 to include all information (with the operation name)
-        if (tokens.length != 3) {
+
+        if (currentCaregiver != null || currentPatient != null) {
+            System.out.println("Please log out before creating accounts.");
+        } else if (tokens.length != 3) {
             System.out.println("Please try again!");
             return;
         }
@@ -478,8 +481,6 @@ try{
 
                 return assignedCaregiver;
 
-
-
             }catch (IllegalArgumentException e) {
                 System.out.println("the date you entered is not valid. Please try again");
             } catch (SQLException e) {
@@ -489,9 +490,6 @@ try{
         }
         return null;
     }
-
-
-
 
 
         private static void uploadAvailability(String[] tokens) {
@@ -521,8 +519,8 @@ try{
 
     private static String cancelQueryHelper(String userType) {
         String cancelQuery = "SELECT AppointmentID FROM Appointments " +
-                "WHERE AppointmentID = ? AND " +
-                userType + " = ?";
+                "WHERE AppointmentID = ? " +
+                "AND " + userType + " = ?";
         return cancelQuery;
     }
 
@@ -538,7 +536,7 @@ try{
             String appointmentID = tokens[1];
             String userType;
             String deletedQuery = "DELETE FROM Appointments WHERE AppointmentID = ?";
-            if (currentCaregiver == null && currentPatient != null) {
+            if (currentPatient != null && currentCaregiver == null) {
                 //if the users logged in as patient
                 userType = "PatientUsername";
                 username = currentPatient.getUsername();
